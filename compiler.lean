@@ -29,8 +29,8 @@ namespace var
 instance : decidable_eq var := by mk_dec_eq_instance
 end var
 
-def state : Type := hash_map var (λ v : var, ℕ)
-def empty_state : state := mk_hash_map (λ v : var, v^.id)
+def vstate : Type := hash_map var (λ v : var, ℕ)
+def empty_vstate : vstate := mk_hash_map (λ v : var, v^.id)
 
 inductive aexp : Type
 | aconst : ℕ → aexp
@@ -47,14 +47,14 @@ inductive bexp : Type
 | beq    : aexp → aexp → bexp
 | ble    : aexp → aexp → bexp
 
-def aeval (st : state) : aexp → ℕ
+def aeval (st : vstate) : aexp → ℕ
 | (aexp.aconst n) := n
 | (aexp.avar v) := st^.dfind v
 | (aexp.aadd e₁ e₂) := aeval e₁ + aeval e₂
 | (aexp.asub e₁ e₂) := aeval e₁ - aeval e₂
 | (aexp.amul e₁ e₂) := aeval e₁ * aeval e₂
 
-def beval (st : state) : bexp → bool
+def beval (st : vstate) : bexp → bool
 | (bexp.btrue)      := tt
 | (bexp.bfalse)     := ff
 | (bexp.bnot b)     := bnot (beval b)
@@ -71,7 +71,7 @@ inductive com : Type
 
 open com
 
-inductive ceval : com → state → state → Prop
+inductive ceval : com → vstate → vstate → Prop
 | eskip : ∀ st, ceval cskip st st
 | eass  : ∀ st a n x, aeval st a = n → ceval (cass x a) st (st^.insert x n)
 | eseq : ∀ c₁ c₂ st₁ st₂ st₃, ceval c₁ st₁ st₂ → ceval c₂ st₂ st₃ → ceval (cseq c₁ c₂) st₁ st₃
@@ -143,13 +143,18 @@ def compute_stack_offsets (c : com) : stack_offsets :=
 compute_stack_offsets_core (collect_assigned_vars c) (mk_hash_map (λ (v : var), v^.id))
 
 -- TODO(dhs): not sure if this is the best way to do it
-def agree_core (offsets : stack_offsets) (st : state) (stk : stack) : Prop :=
+def agree_core (offsets : stack_offsets) (st : vstate) (stk : stack) : Prop :=
 ∃ shift,
   ∀ (v : var), (v ∈ offsets → at_nth stk (offsets^.dfind v + shift) (st^.dfind v))
              ∧ (v ∉ offsets → st^.dfind v = 0)
 
-def agree (c : com) (st : state) (stk : stack) : Prop :=
+def agree (c : com) (st : vstate) (stk : stack) : Prop :=
 agree_core (compute_stack_offsets c) st stk
+
+-- TODO(dhs): need to track the stack offsets
+-- This is tricky, since compile_aexp needs to know in its recursive calls how much it has
+-- modified the stack by.
+-- The state-monad approach _should_ be the best but it may be annoying to prove with
 
 def compile_aexp (offsets : stack_offsets) : aexp → code
 | (aexp.aconst n)   := [iconst n]
@@ -168,8 +173,42 @@ def compile_bexp (offsets : stack_offsets) : bexp → bool → ℕ → code
 | (bexp.beq e₁ e₂)  cond ofs := compile_aexp offsets e₁ ++ compile_aexp offsets e₂ ++ (if cond then [ibeq ofs] else [ibne ofs])
 | (bexp.ble e₁ e₂)  cond ofs := compile_aexp offsets e₁ ++ compile_aexp offsets e₂ ++ (if cond then [ible ofs] else [ibgt ofs])
 
-definition compile_com (c : com) : code := []
+definition compile_com_core : com → state stack_offsets code
+| cskip         := return []
+| (cass v e)    := compile_aexp offsets e ++ [iset (offsets^.dfind v)]
+| (cseq c₁ c₂)  := compile_com_core offsets c₁ ++ compile_com_core offsets c₂
+| (cif b c₁ c₂) := let code₁ := compile_com offsets c₁,
 
+
+
+
+
+
+/-
+Fixpoint compile_com (c: com) : code :=
+  match c with
+  | SKIP =>
+      nil
+  | (id ::= a) =>
+      compile_aexp a ++ Isetvar id :: nil
+  | (c1 ;; c2) =>
+      compile_com c1 ++ compile_com c2
+  | IFB b THEN ifso ELSE ifnot FI =>
+      let code_ifso := compile_com ifso in
+      let code_ifnot := compile_com ifnot in
+      compile_bexp b false (length code_ifso + 1)
+      ++ code_ifso
+      ++ Ibranch_forward (length code_ifnot)
+      :: code_ifnot
+  | WHILE b DO body END =>
+      let code_body := compile_com body in
+      let code_test := compile_bexp b false (length code_body + 1) in
+      code_test
+      ++ code_body
+      ++ Ibranch_backward (length code_test + length code_body + 1)
+      :: nil
+  end.
+-/
 inductive codeseq_at : code → ℕ → code → Prop
 | intro : ∀ code₁ code₂ code₃ pc, pc = length code₁ → codeseq_at (code₁ ++ code₂ ++ code₃) pc code₂
 
