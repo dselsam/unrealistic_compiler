@@ -121,18 +121,18 @@ def set_nth {α : Type*} : list α → ℕ → α → option (list α)
 | []      _     _ := none
 
 inductive veval (c : code) : config -> config -> Prop
-| trans_const : ∀ pc stk n, at_nth c pc (iconst n) → veval (pc, stk) (pc + 1, n :: stk)
-| trans_get   : ∀ pc stk n v, at_nth c pc (iget n) → at_nth stk n v → veval (pc, stk) (pc + 1, v :: stk)
-| trans_set   : ∀ pc stk n v stk', at_nth c pc (iset n) → set_nth stk n v = some stk' → veval (pc, v :: stk) (pc + 1, stk')
-| trans_add   : ∀ pc stk n₁ n₂, at_nth c pc iadd → veval (pc, n₂ :: n₁ :: stk) (pc + 1, (n₁ + n₂) :: stk)
-| trans_sub   : ∀ pc stk n₁ n₂, at_nth c pc iadd → veval (pc, n₂ :: n₁ :: stk) (pc + 1, (n₁ - n₂) :: stk)
-| trans_mul   : ∀ pc stk n₁ n₂, at_nth c pc iadd → veval (pc, n₂ :: n₁ :: stk) (pc + 1, (n₁ * n₂) :: stk)
-| trans_bf    : ∀ pc stk ofs pc', at_nth c pc (ibf ofs) → pc' = pc + 1 + ofs → veval (pc, stk) (pc', stk)
-| trans_bb    : ∀ pc stk ofs pc', at_nth c pc (ibf ofs) → pc' + ofs = pc + 1 → veval (pc, stk) (pc', stk)
-| trans_beq   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ibeq ofs) → pc' = (if n₁ = n₂ then pc + 1 + ofs else pc + 1) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
-| trans_bne   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ibeq ofs) → pc' = (if n₁ = n₂ then pc + 1 else pc + 1 + ofs) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
-| trans_ble   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ible ofs) → pc' = (if n₁ ≤ n₂ then pc + 1 + ofs else pc + 1) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
-| trans_bgt   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ibgt ofs) → pc' = (if n₁ ≤ n₂ then pc + 1 else pc + 1 + ofs) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
+| vconst : ∀ pc stk n, at_nth c pc (iconst n) → veval (pc, stk) (pc + 1, n :: stk)
+| vget   : ∀ pc stk n v, at_nth c pc (iget n) → at_nth stk n v → veval (pc, stk) (pc + 1, v :: stk)
+| vset   : ∀ pc stk n v stk', at_nth c pc (iset n) → set_nth stk n v = some stk' → veval (pc, v :: stk) (pc + 1, stk')
+| vadd   : ∀ pc stk n₁ n₂, at_nth c pc iadd → veval (pc, n₂ :: n₁ :: stk) (pc + 1, (n₁ + n₂) :: stk)
+| vsub   : ∀ pc stk n₁ n₂, at_nth c pc iadd → veval (pc, n₂ :: n₁ :: stk) (pc + 1, (n₁ - n₂) :: stk)
+| vmul   : ∀ pc stk n₁ n₂, at_nth c pc iadd → veval (pc, n₂ :: n₁ :: stk) (pc + 1, (n₁ * n₂) :: stk)
+| vbf    : ∀ pc stk ofs pc', at_nth c pc (ibf ofs) → pc' = pc + 1 + ofs → veval (pc, stk) (pc', stk)
+| vbb    : ∀ pc stk ofs pc', at_nth c pc (ibf ofs) → pc' + ofs = pc + 1 → veval (pc, stk) (pc', stk)
+| vbeq   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ibeq ofs) → pc' = (if n₁ = n₂ then pc + 1 + ofs else pc + 1) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
+| vbne   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ibeq ofs) → pc' = (if n₁ = n₂ then pc + 1 else pc + 1 + ofs) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
+| vble   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ible ofs) → pc' = (if n₁ ≤ n₂ then pc + 1 + ofs else pc + 1) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
+| vbgt   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ibgt ofs) → pc' = (if n₁ ≤ n₂ then pc + 1 else pc + 1 + ofs) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
 
 def vhalts (c : code) (stk_init stk_fin : stack) : Prop :=
 ∃ pc, at_nth c pc ihalt ∧ star (veval c) (0, stk_init) (pc, stk_fin)
@@ -157,10 +157,8 @@ compute_stack_offsets_core (collect_assigned_vars c) (mk_hash_map (λ (v : var),
 def agree (offsets : stack_offsets) (st : vstate) (stk : stack) : Prop :=
   ∀ (v : var), st^.find v = nth stk (offsets^.dfind v)
 
--- TODO(dhs): need to track the stack offsets
--- This is tricky, since compile_aexp needs to know in its recursive calls how much it has
--- modified the stack by.
--- The state-monad approach _should_ be the best but it may be annoying to prove with
+inductive codeseq_at : code → ℕ → code → Prop
+| intro : ∀ code₁ code₂ code₃ pc, pc = length code₁ → codeseq_at (code₁ ++ code₂ ++ code₃) pc code₂
 
 def compile_aexp_core (offsets : stack_offsets) : aexp → ℕ → code
 | (aexp.aconst n)   vofs := [iconst n]
@@ -170,6 +168,22 @@ def compile_aexp_core (offsets : stack_offsets) : aexp → ℕ → code
 | (aexp.amul e₁ e₂) vofs := compile_aexp_core e₂ vofs ++ compile_aexp_core e₁ (vofs + 1) ++ [imul]
 
 def compile_aexp (offsets : stack_offsets) (e : aexp) := compile_aexp_core offsets e 0
+
+lemma compile_aexp_core_correct :
+  ∀ code st e pc stk offsets k,
+    codeseq_at code pc (compile_aexp_core offsets e k)
+    → star (veval code) (pc, stk) (pc + length (compile_aexp_core offsets e k), aeval st e :: stk)
+| .(_) st (aexp.aconst n) .(pc) stk offsets k (codeseq_at.intro code₁ .(compile_aexp_core offsets _ k) code₃ pc H_pc) :=
+begin
+simp [compile_aexp_core, length, aeval],
+apply star.rtrans,
+apply veval.vconst,
+-- TODO(dhs): basic list property
+have H_at_nth : at_nth (code₁ ++ iconst n :: code₃) pc (iconst n) := sorry,
+exact H_at_nth,
+apply star.rfl
+end
+
 
 def compile_bexp (offsets : stack_offsets) : bexp → bool → ℕ → code
 | (bexp.btrue)      cond ofs := if cond then [ibf ofs] else []
@@ -198,18 +212,16 @@ def compile_bexp (offsets : stack_offsets) : bexp → bool → ℕ → code
 
 definition compile_com (offsets : stack_offsets) : com → code
 | cskip         := []
-| (cass v e)    := (compile_aexp offsets e 0).1 ++ [iset $ offsets^.dfind v]
+| (cass v e)    := compile_aexp offsets e ++ [iset $ offsets^.dfind v]
 | (cseq c₁ c₂)  := compile_com c₁ ++ compile_com c₂
 
 | (cif b c₁ c₂) := let code₁ := compile_com c₁,
                        code₂ := compile_com c₂
-                   in  (compile_bexp offsets b false (length code₁ + 1) 0).1 ++ code₁ ++ [ibf (length code₂)] ++ code₂
+                   in  compile_bexp offsets b false (length code₁ + 1) ++ code₁ ++ [ibf (length code₂)] ++ code₂
 | (cwhile b c)  := let code_body := compile_com c,
-                       code_test := (compile_bexp offsets b ff (length code_body + 1) 0).1
+                       code_test := compile_bexp offsets b ff (length code_body + 1)
                    in  code_test ++ code_body ++ [ibb (length code_test + length code_body + 1)]
 
-inductive codeseq_at : code → ℕ → code → Prop
-| intro : ∀ code₁ code₂ code₃ pc, pc = length code₁ → codeseq_at (code₁ ++ code₂ ++ code₃) pc code₂
 
 
 lemma compile_aexp_correct :
