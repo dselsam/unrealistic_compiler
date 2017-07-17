@@ -162,28 +162,26 @@ def agree (offsets : stack_offsets) (st : vstate) (stk : stack) : Prop :=
 -- modified the stack by.
 -- The state-monad approach _should_ be the best but it may be annoying to prove with
 
-def compile_aexp (offsets : stack_offsets) : aexp → state ℕ code
-| (aexp.aconst n)   := do state.inc, return [iconst n]
-| (aexp.avar v)     := do ofs ← state.read, state.inc, return [iget $ offsets^.dfind v + ofs]
-| (aexp.aadd e₁ e₂) := do code₁ ← compile_aexp e₂, code₂ ← compile_aexp e₁, state.dec, return $ code₁ ++ code₂ ++ [iadd]
-| (aexp.asub e₁ e₂) := do code₁ ← compile_aexp e₂, code₂ ← compile_aexp e₁, state.dec, return $ code₁ ++ code₂ ++ [isub]
-| (aexp.amul e₁ e₂) := do code₁ ← compile_aexp e₂, code₂ ← compile_aexp e₁, state.dec, return $ code₁ ++ code₂ ++ [imul]
+def compile_aexp_core (offsets : stack_offsets) : aexp → ℕ → code
+| (aexp.aconst n)   vofs := [iconst n]
+| (aexp.avar v)     vofs := [iget $ offsets^.dfind v + vofs]
+| (aexp.aadd e₁ e₂) vofs := compile_aexp_core e₂ vofs ++ compile_aexp_core e₁ (vofs + 1) ++ [iadd]
+| (aexp.asub e₁ e₂) vofs := compile_aexp_core e₂ vofs ++ compile_aexp_core e₁ (vofs + 1) ++ [isub]
+| (aexp.amul e₁ e₂) vofs := compile_aexp_core e₂ vofs ++ compile_aexp_core e₁ (vofs + 1) ++ [imul]
 
-def compile_bexp (offsets : stack_offsets) : bexp → bool → ℕ → state ℕ code
-| (bexp.btrue)      cond ofs := return $ if cond then [ibf ofs] else []
-| (bexp.bfalse)     cond ofs := return $ if cond then [] else [ibf ofs]
+def compile_aexp (offsets : stack_offsets) (e : aexp) := compile_aexp_core offsets e 0
+
+def compile_bexp (offsets : stack_offsets) : bexp → bool → ℕ → code
+| (bexp.btrue)      cond ofs := if cond then [ibf ofs] else []
+| (bexp.bfalse)     cond ofs := if cond then [] else [ibf ofs]
 | (bexp.bnot b)     cond ofs := compile_bexp b (bnot cond) ofs
-| (bexp.band b₁ b₂) cond ofs := do code₂ ← compile_bexp b₂ cond ofs,
-                                   code₁ ← compile_bexp b₁ false (if cond then length code₂ else ofs + length code₂),
-                                   return $ code₁ ++ code₂,
-| (bexp.beq e₁ e₂)  cond ofs := do code₁ ← compile_aexp offsets e₁,
-                                   code₂ ← compile_aexp offsets e₂,
-                                   state.dec,
-                                   return $ code₁ ++ code₂ ++ (if cond then [ibeq ofs] else [ibne ofs])
-| (bexp.ble e₁ e₂)  cond ofs := do code₁ ← compile_aexp offsets e₁,
-                                   code₂ ← compile_aexp offsets e₂,
-                                   state.dec,
-                                   return $ code₁ ++ code₂ ++ (if cond then [ible ofs] else [ibgt ofs])
+| (bexp.band b₁ b₂) cond ofs := let code₂ := compile_bexp b₂ cond ofs,
+                                    code₁ := compile_bexp b₁ false (if cond then length code₂ else ofs + length code₂)
+                                in  code₁ ++ code₂
+
+| (bexp.beq e₁ e₂)  cond ofs := compile_aexp_core offsets e₁ 0 ++ compile_aexp_core offsets e₂ 1 ++ (if cond then [ibeq ofs] else [ibne ofs])
+| (bexp.ble e₁ e₂)  cond ofs := compile_aexp_core offsets e₁ 0 ++ compile_aexp_core offsets e₂ 1 ++ (if cond then [ible ofs] else [ibgt ofs])
+
 
 -- Example program
 ---------------------------
