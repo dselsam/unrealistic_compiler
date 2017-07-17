@@ -12,6 +12,15 @@ end
 
 end hash_map
 
+section seq
+variables {α : Type*} (rel : α → α → Prop)
+
+inductive star : α → α → Prop
+| rfl    : ∀ (x : α), star x x
+| rtrans : ∀ (x y z : α), rel x y → star y z → star x y
+
+end seq
+
 namespace compiler
 
 structure var : Type := (id : ℕ)
@@ -21,6 +30,7 @@ instance : decidable_eq var := by mk_dec_eq_instance
 end var
 
 def state : Type := hash_map var (λ v : var, ℕ)
+def empty_state : state := mk_hash_map (λ v : var, v^.id)
 
 inductive aexp : Type
 | aconst : ℕ → aexp
@@ -112,6 +122,14 @@ inductive veval (c : code) : config -> config -> Prop
 | trans_bne   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ibeq ofs) → pc' = (if n₁ = n₂ then pc + 1 else pc + 1 + ofs) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
 | trans_ble   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ible ofs) → pc' = (if n₁ ≤ n₂ then pc + 1 + ofs else pc + 1) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
 | trans_bgt   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ibgt ofs) → pc' = (if n₁ ≤ n₂ then pc + 1 else pc + 1 + ofs) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
+
+def vhalts (c : code) (stk_init stk_fin : stack) : Prop :=
+∃ pc, at_nth c pc ihalt ∧ star (veval c) (0, stk_init) (pc, stk_fin)
+
+definition compile (c : com) : code := []
+
+theorem compile_correct_terminating :
+  ∀ c st, ceval c empty_state st → ∃ stk, vhalts (compile c) [] stk ∧ true := sorry
 
 
 
