@@ -1,4 +1,4 @@
-import data.hash_map
+import data.hash_map library_dev.data.list.set
 
 open tactic list
 
@@ -97,7 +97,7 @@ inductive instruction : Type
 
 open instruction
 
-def code := list instruction.
+@[reducible] def code := list instruction.
 
 @[reducible] def stack : Type := list ℕ
 @[reducible] def config : Type := ℕ × stack
@@ -126,11 +126,44 @@ inductive veval (c : code) : config -> config -> Prop
 def vhalts (c : code) (stk_init stk_fin : stack) : Prop :=
 ∃ pc, at_nth c pc ihalt ∧ star (veval c) (0, stk_init) (pc, stk_fin)
 
-definition compile (c : com) : code := []
+def collect_assigned_vars : com → list var
+| (cskip)       := []
+| (cass v _)    := [v]
+| (cseq c₁ c₂)  := collect_assigned_vars c₁ ∪ collect_assigned_vars c₂
+| (cif b c₁ c₂) := collect_assigned_vars c₁ ∪ collect_assigned_vars c₂
+| (cwhile b c)  := collect_assigned_vars c
 
-theorem compile_correct_terminating :
-  ∀ c st, ceval c empty_state st → ∃ stk, vhalts (compile c) [] stk ∧ true := sorry
+@[reducible] def stack_offsets : Type := hash_map var (λ v : var, ℕ)
 
+def compute_stack_offsets_core : list var → stack_offsets → stack_offsets
+| []        s := s
+| (v :: vs) s := compute_stack_offsets_core vs (s^.insert v (length vs))
+
+def compute_stack_offsets (c : com) : stack_offsets :=
+compute_stack_offsets_core (collect_assigned_vars c) (mk_hash_map (λ (v : var), v^.id))
+
+-- TODO(dhs): not sure if this is the best way to do it
+def agree_core (offsets : stack_offsets) (st : state) (stk : stack) : Prop :=
+∃ shift,
+  ∀ (v : var), (v ∈ offsets → at_nth stk (offsets^.dfind v + shift) (st^.dfind v))
+             ∧ (v ∉ offsets → st^.dfind v = 0)
+
+def agree (c : com) (st : state) (stk : stack) : Prop :=
+agree_core (compute_stack_offsets c) st stk
+
+definition compile_com (c : com) : code := []
+
+inductive codeseq_at : code → ℕ → code → Prop
+| intro : ∀ code₁ code₂ code₃ pc, pc = length code₁ → codeseq_at (code₁ ++ code₂ ++ code₃) pc code₂
+
+theorem compile_correct_terminating_alt :
+  ∀ code st c st',
+    ceval c st st' →
+      ∀ offsets stk pc, codeseq_at code pc (compile_com c) →
+                agree offsets st stk →
+                ∃ stk', star (veval code) (pc, stk) (pc + length (compile_com c), stk')
+                        ∧ agree offsets st' stk' :=
+sorry
 
 
 end compiler
