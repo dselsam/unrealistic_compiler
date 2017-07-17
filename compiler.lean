@@ -8,8 +8,7 @@ namespace state
 λ f s, ((), f s)
 
 def inc : state ℕ unit := modify (λ n, n + 1)
-def dec : state ℕ unit := modify (λ n, n - 1)
-
+def dec : state ℕ unit := modify (λ n, n + 1)
 end state
 
 namespace hash_map
@@ -166,19 +165,12 @@ agree_core (compute_stack_offsets c) st stk
 -- modified the stack by.
 -- The state-monad approach _should_ be the best but it may be annoying to prove with
 
-def compile_aexp (offsets : stack_offsets) : aexp → state ℕ code
-| (aexp.aconst n)   := state.inc >> return [iconst n]
-| (aexp.avar v)     := state.inc >> return [iget $ offsets^.dfind v]
-| (aexp.aadd e₁ e₂) := do code₂ ← compile_aexp e₂,
-                          code₁ ← compile_aexp e₁,
-                          return $ iadd :: (code₂ ++ code₁)
-
-| (aexp.asub e₁ e₂) := do code₂ ← compile_aexp e₂,
-                          code₁ ← compile_aexp e₁,
-                          return $ isub :: (code₂ ++ code₁)
-| (aexp.amul e₁ e₂) := do code₂ ← compile_aexp e₂,
-                          code₁ ← compile_aexp e₁,
-                          return $ imul :: (code₂ ++ code₁)
+def compile_aexp (offsets : stack_offsets) : aexp → code
+| (aexp.aconst n)   := [iconst n]
+| (aexp.avar v)     := [iget $ offsets^.dfind v]
+| (aexp.aadd e₁ e₂) := iadd :: (compile_aexp e₂ ++ compile_aexp e₁)
+| (aexp.asub e₁ e₂) := isub :: (compile_aexp e₂ ++ compile_aexp e₁)
+| (aexp.amul e₁ e₂) := imul :: (compile_aexp e₂ ++ compile_aexp e₁)
 
 def compile_bexp (offsets : stack_offsets) : bexp → bool → ℕ → code
 | (bexp.btrue)      cond ofs := if cond then [ibf ofs] else []
