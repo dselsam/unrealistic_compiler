@@ -1,7 +1,5 @@
 import data.hash_map library_dev.data.list.set
 
-open tactic list
-
 namespace state
 
 @[inline] def modify {σ : Type} : (σ → σ) → state σ unit :=
@@ -11,6 +9,15 @@ def inc : state ℕ unit := modify (λ n, n + 1)
 def dec : state ℕ unit := modify (λ n, n - 1)
 end state
 
+namespace list
+
+def dnth {α : Type*} [decidable_eq α] [inhabited α] (xs : list α) (n : ℕ) : α :=
+match xs^.nth n with
+| (some x) := x
+| none     := default α
+end
+
+end list
 namespace hash_map
 
 def dfind {α : Type*} [decidable_eq α] {β : α → Type*} [∀ a, inhabited (β a)] (m : hash_map α β) (a : α) : β a :=
@@ -30,7 +37,15 @@ inductive star : α → α → Prop
 
 end seq
 
+namespace star
+variables {α : Type*} (rel : α → α → Prop)
+
+lemma trans (x y z : α) : star rel x y → star rel y z → star rel x z := sorry
+
+end star
+
 namespace compiler
+open tactic list
 
 structure var : Type := (id : ℕ)
 
@@ -38,7 +53,7 @@ namespace var
 instance : decidable_eq var := by mk_dec_eq_instance
 end var
 
-def vstate : Type := hash_map var (λ v : var, ℕ)
+@[reducible] def vstate : Type := hash_map var (λ v : var, ℕ)
 def empty_vstate : vstate := mk_hash_map (λ v : var, v^.id)
 
 inductive aexp : Type
@@ -124,7 +139,7 @@ inductive veval (c : code) : config -> config -> Prop
 | vconst : ∀ pc stk n, at_nth c pc (iconst n) → veval (pc, stk) (pc + 1, n :: stk)
 | vget   : ∀ pc stk n v, at_nth c pc (iget n) → at_nth stk n v → veval (pc, stk) (pc + 1, v :: stk)
 | vset   : ∀ pc stk n v stk', at_nth c pc (iset n) → set_nth stk n v = some stk' → veval (pc, v :: stk) (pc + 1, stk')
-| vadd   : ∀ pc stk n₁ n₂, at_nth c pc iadd → veval (pc, n₂ :: n₁ :: stk) (pc + 1, (n₁ + n₂) :: stk)
+| vadd   : ∀ pc stk n n₁ n₂, at_nth c pc iadd → n = n₁ + n₂ → veval (pc, n₂ :: n₁ :: stk) (pc + 1, n :: stk)
 | vsub   : ∀ pc stk n₁ n₂, at_nth c pc iadd → veval (pc, n₂ :: n₁ :: stk) (pc + 1, (n₁ - n₂) :: stk)
 | vmul   : ∀ pc stk n₁ n₂, at_nth c pc iadd → veval (pc, n₂ :: n₁ :: stk) (pc + 1, (n₁ * n₂) :: stk)
 | vbf    : ∀ pc stk ofs pc', at_nth c pc (ibf ofs) → pc' = pc + 1 + ofs → veval (pc, stk) (pc', stk)
@@ -154,8 +169,15 @@ def compute_stack_offsets (c : com) : stack_offsets :=
 compute_stack_offsets_core (collect_assigned_vars c) (mk_hash_map (λ (v : var), v^.id))
 
 -- TODO(dhs): not sure if this is the best way to do it
-def agree (offsets : stack_offsets) (st : vstate) (stk : stack) : Prop :=
-  ∀ (v : var), st^.find v = nth stk (offsets^.dfind v)
+def agree (offsets : stack_offsets) (vofs : ℕ) (st : vstate) (stk : stack) : Prop :=
+  ∀ (v : var), st^.find v = nth stk (vofs + offsets^.dfind v)
+
+-- TODO(dhs): simple
+lemma dagree_of_agree {offsets : stack_offsets} {vofs : ℕ} {st : vstate} {stk : stack} :
+  agree offsets vofs st stk → ∀ (v : var), st^.dfind v = dnth stk (vofs + offsets^.dfind v) := sorry
+
+lemma agree_push {offsets : stack_offsets} {vofs : ℕ} {st : vstate} {stk : stack} {n : ℕ} :
+  agree offsets vofs st stk → agree offsets (vofs + 1) st (n :: stk) := sorry
 
 inductive codeseq_at : code → ℕ → code → Prop
 | intro : ∀ code₁ code₂ code₃ pc, pc = length code₁ → codeseq_at (code₁ ++ code₂ ++ code₃) pc code₂
@@ -169,19 +191,72 @@ def compile_aexp_core (offsets : stack_offsets) : aexp → ℕ → code
 
 def compile_aexp (offsets : stack_offsets) (e : aexp) := compile_aexp_core offsets e 0
 
+-- TODO(dhs): basic list property
+lemma at_nth_of_len {α : Type*} {xs ys : list α} {x : α} {k : ℕ} : k = length xs → at_nth (xs ++ x :: ys) k x := sorry
+
 lemma compile_aexp_core_correct :
-  ∀ code st e pc stk offsets k,
-    codeseq_at code pc (compile_aexp_core offsets e k)
-    → star (veval code) (pc, stk) (pc + length (compile_aexp_core offsets e k), aeval st e :: stk)
-| .(_) st (aexp.aconst n) .(pc) stk offsets k (codeseq_at.intro code₁ .(compile_aexp_core offsets _ k) code₃ pc H_pc) :=
+  ∀ code st e pc stk offsets vofs,
+    codeseq_at code pc (compile_aexp_core offsets e vofs)
+    → agree offsets vofs st stk
+    → star (veval code) (pc, stk) (pc + length (compile_aexp_core offsets e vofs), aeval st e :: stk)
+/-
+| .(_) st (aexp.aconst n) .(pc) stk offsets vofs (codeseq_at.intro code₁ ._ code₃ pc H_pc) H_agree :=
 begin
 simp [compile_aexp_core, length, aeval],
 apply star.rtrans,
 apply veval.vconst,
--- TODO(dhs): basic list property
-have H_at_nth : at_nth (code₁ ++ iconst n :: code₃) pc (iconst n) := sorry,
-exact H_at_nth,
+apply at_nth_of_len H_pc,
 apply star.rfl
+end
+
+| .(_) st (aexp.avar v) .(pc) stk offsets vofs (codeseq_at.intro code₁ ._ code₃ pc H_pc) H_agree :=
+begin
+simp [compile_aexp_core, length, aeval],
+apply star.rtrans,
+apply veval.vget,
+apply at_nth_of_len H_pc,
+simp [agree] at H_agree,
+-- TODO(dhs): somehowe need to assume that v ∈ st, then easy
+have H_v_ok : v ∈ st := sorry,
+rw dagree_of_agree H_agree,
+exact sorry,
+apply star.rfl
+end
+-/
+| .(_) st (aexp.aadd e₁ e₂) .(pc) (n₂::n₁::stk) offsets vofs (codeseq_at.intro code₁ ._ code₃ pc H_pc) H_agree :=
+begin
+simp [compile_aexp_core, length, aeval],
+apply star.trans,
+-- Compile e₂
+apply compile_aexp_core_correct _ st e₂ _ _ offsets vofs,
+rw ← append_assoc,
+apply codeseq_at.intro _ _ _ _ H_pc,
+exact H_agree,
+-- Compile e₁
+apply star.trans,
+apply compile_aexp_core_correct _ st e₁ _ _ offsets (vofs+1),
+have H_assoc :
+(code₁ ++ (compile_aexp_core offsets e₂ vofs ++ (compile_aexp_core offsets e₁ (vofs + 1) ++ iadd :: code₃)))
+=
+(code₁ ++ compile_aexp_core offsets e₂ vofs) ++ (compile_aexp_core offsets e₁ (vofs + 1)) ++ iadd :: code₃ := sorry,
+rw H_assoc,
+apply codeseq_at.intro _ _ _ _,
+-- TODO(dhs): basic list property
+exact sorry,
+apply agree_push H_agree,
+-- Add instruction
+apply star.rtrans,
+apply veval.vadd,
+
+--apply at_nth_of_len H_pc,
+
+--exact sorry, -- codeseq_at
+
+--apply compile_aexp_core_correct,
+
+--apply veval.vadd,
+--apply at_nth_of_len H_pc,
+--apply star.rfl
 end
 
 
