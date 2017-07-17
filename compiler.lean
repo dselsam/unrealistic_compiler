@@ -151,6 +151,23 @@ def agree_core (offsets : stack_offsets) (st : state) (stk : stack) : Prop :=
 def agree (c : com) (st : state) (stk : stack) : Prop :=
 agree_core (compute_stack_offsets c) st stk
 
+def compile_aexp (offsets : stack_offsets) : aexp → code
+| (aexp.aconst n)   := [iconst n]
+| (aexp.avar v)     := [iget $ offsets^.dfind v]
+| (aexp.aadd e₁ e₂) := iadd :: (compile_aexp e₂ ++ compile_aexp e₁)
+| (aexp.asub e₁ e₂) := isub :: (compile_aexp e₂ ++ compile_aexp e₁)
+| (aexp.amul e₁ e₂) := imul :: (compile_aexp e₂ ++ compile_aexp e₁)
+
+def compile_bexp (offsets : stack_offsets) : bexp → bool → ℕ → code
+| (bexp.btrue)      cond ofs := if cond then [ibf ofs] else []
+| (bexp.bfalse)     cond ofs := if cond then [] else [ibf ofs]
+| (bexp.bnot b)     cond ofs := compile_bexp b (bnot cond) ofs
+| (bexp.band b₁ b₂) cond ofs := let c₂ := compile_bexp b₂ cond ofs,
+                                    c₁ := compile_bexp b₁ false (if cond then length c₂ else ofs + length c₂)
+                                in  c₁ ++ c₂
+| (bexp.beq e₁ e₂)  cond ofs := compile_aexp offsets e₁ ++ compile_aexp offsets e₂ ++ (if cond then [ibeq ofs] else [ibne ofs])
+| (bexp.ble e₁ e₂)  cond ofs := compile_aexp offsets e₁ ++ compile_aexp offsets e₂ ++ (if cond then [ible ofs] else [ibgt ofs])
+
 definition compile_com (c : com) : code := []
 
 inductive codeseq_at : code → ℕ → code → Prop
