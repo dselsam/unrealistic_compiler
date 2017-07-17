@@ -9,7 +9,6 @@ namespace state
 
 def inc : state ℕ unit := modify (λ n, n + 1)
 def dec : state ℕ unit := modify (λ n, n - 1)
-
 end state
 
 namespace hash_map
@@ -90,6 +89,8 @@ inductive ceval : com → vstate → vstate → Prop
 | ewhilet : ∀ st₁ st₂ st₃ b c, beval st₁ b = tt → ceval c st₁ st₂ → ceval (cwhile b c) st₂ st₃ → ceval (cwhile b c) st₁ st₃
 | ewhilef : ∀ st b c, beval st b = ff → ceval (cwhile b c) st st
 
+open ceval
+
 inductive instruction : Type
 | iconst : ℕ → instruction
 | iget   : ℕ → instruction
@@ -153,13 +154,8 @@ def compute_stack_offsets (c : com) : stack_offsets :=
 compute_stack_offsets_core (collect_assigned_vars c) (mk_hash_map (λ (v : var), v^.id))
 
 -- TODO(dhs): not sure if this is the best way to do it
-def agree_core (offsets : stack_offsets) (st : vstate) (stk : stack) : Prop :=
-∃ shift,
-  ∀ (v : var), (v ∈ offsets → at_nth stk (offsets^.dfind v + shift) (st^.dfind v))
-             ∧ (v ∉ offsets → st^.dfind v = 0)
-
-def agree (c : com) (st : vstate) (stk : stack) : Prop :=
-agree_core (compute_stack_offsets c) st stk
+def agree (offsets : stack_offsets) (st : vstate) (stk : stack) : Prop :=
+  ∀ (v : var), st^.find v = nth stk (offsets^.dfind v)
 
 -- TODO(dhs): need to track the stack offsets
 -- This is tricky, since compile_aexp needs to know in its recursive calls how much it has
@@ -167,78 +163,150 @@ agree_core (compute_stack_offsets c) st stk
 -- The state-monad approach _should_ be the best but it may be annoying to prove with
 
 def compile_aexp (offsets : stack_offsets) : aexp → state ℕ code
-| (aexp.aconst n)   := state.inc >> return [iconst n]
-
+| (aexp.aconst n)   := do state.inc, return [iconst n]
 | (aexp.avar v)     := do ofs ← state.read, state.inc, return [iget $ offsets^.dfind v + ofs]
-
-| (aexp.aadd e₁ e₂) := do code₂ ← compile_aexp e₂,
-                          code₁ ← compile_aexp e₁,
-                          return $ iadd :: (code₂ ++ code₁)
-
-| (aexp.asub e₁ e₂) := do code₂ ← compile_aexp e₂,
-                          code₁ ← compile_aexp e₁,
-                          return $ isub :: (code₂ ++ code₁)
-| (aexp.amul e₁ e₂) := do code₂ ← compile_aexp e₂,
-                          code₁ ← compile_aexp e₁,
-                          return $ imul :: (code₂ ++ code₁)
+| (aexp.aadd e₁ e₂) := do code₁ ← compile_aexp e₂, code₂ ← compile_aexp e₁, state.dec, return $ code₁ ++ code₂ ++ [iadd]
+| (aexp.asub e₁ e₂) := do code₁ ← compile_aexp e₂, code₂ ← compile_aexp e₁, state.dec, return $ code₁ ++ code₂ ++ [isub]
+| (aexp.amul e₁ e₂) := do code₁ ← compile_aexp e₂, code₂ ← compile_aexp e₁, state.dec, return $ code₁ ++ code₂ ++ [imul]
 
 def compile_bexp (offsets : stack_offsets) : bexp → bool → ℕ → state ℕ code
-| (bexp.btrue)      cond ofs := if cond then state.inc >> return [ibf ofs] else return []
-| (bexp.bfalse)     cond ofs := if cond then [] else [ibf ofs]
+| (bexp.btrue)      cond ofs := return $ if cond then [ibf ofs] else []
+| (bexp.bfalse)     cond ofs := return $ if cond then [] else [ibf ofs]
 | (bexp.bnot b)     cond ofs := compile_bexp b (bnot cond) ofs
-| (bexp.band b₁ b₂) cond ofs := let c₂ := compile_bexp b₂ cond ofs,
-                                    c₁ := compile_bexp b₁ false (if cond then length c₂ else ofs + length c₂)
-                                in  c₁ ++ c₂
-| (bexp.beq e₁ e₂)  cond ofs := compile_aexp offsets e₁ ++ compile_aexp offsets e₂ ++ (if cond then [ibeq ofs] else [ibne ofs])
-| (bexp.ble e₁ e₂)  cond ofs := compile_aexp offsets e₁ ++ compile_aexp offsets e₂ ++ (if cond then [ible ofs] else [ibgt ofs])
+| (bexp.band b₁ b₂) cond ofs := do code₂ ← compile_bexp b₂ cond ofs,
+                                   code₁ ← compile_bexp b₁ false (if cond then length code₂ else ofs + length code₂),
+                                   return $ code₁ ++ code₂,
+| (bexp.beq e₁ e₂)  cond ofs := do code₁ ← compile_aexp offsets e₁,
+                                   code₂ ← compile_aexp offsets e₂,
+                                   state.dec,
+                                   return $ code₁ ++ code₂ ++ (if cond then [ibeq ofs] else [ibne ofs])
+| (bexp.ble e₁ e₂)  cond ofs := do code₁ ← compile_aexp offsets e₁,
+                                   code₂ ← compile_aexp offsets e₂,
+                                   state.dec,
+                                   return $ code₁ ++ code₂ ++ (if cond then [ible ofs] else [ibgt ofs])
 
-definition compile_com_core : com → state stack_offsets code
-| cskip         := return []
-| (cass v e)    := compile_aexp offsets e ++ [iset (offsets^.dfind v)]
-| (cseq c₁ c₂)  := compile_com_core offsets c₁ ++ compile_com_core offsets c₂
-| (cif b c₁ c₂) := let code₁ := compile_com offsets c₁,
+-- Example program
+---------------------------
+-- (cass `x 1)
+-- (cass `y (+ x x))
+-- (cass `z (+ x (+ y x))
 
+-- Want
+--------------------------
+-- Initial stack: [x:=0, y:=0, z:=0]
+-- cass `x 1 ==>  push 1, iset 1 ==> [x:=1, y:=0, z:=0]
+-- cass `y (+ x x) ==> iget 0, iget 1, iadd, iset 2 ==> [x:=2, y:=4, z:=0]
+-- cass `z (+ x (+ y x)) ==> iget 0, iget 2, iget 2, iadd, iadd, iset 3
 
+definition compile_com (offsets : stack_offsets) : com → code
+| cskip         := []
+| (cass v e)    := (compile_aexp offsets e 0).1 ++ [iset $ offsets^.dfind v]
+| (cseq c₁ c₂)  := compile_com c₁ ++ compile_com c₂
 
+| (cif b c₁ c₂) := let code₁ := compile_com c₁,
+                       code₂ := compile_com c₂
+                   in  (compile_bexp offsets b false (length code₁ + 1) 0).1 ++ code₁ ++ [ibf (length code₂)] ++ code₂
+| (cwhile b c)  := let code_body := compile_com c,
+                       code_test := (compile_bexp offsets b ff (length code_body + 1) 0).1
+                   in  code_test ++ code_body ++ [ibb (length code_test + length code_body + 1)]
 
-
-
-/-
-Fixpoint compile_com (c: com) : code :=
-  match c with
-  | SKIP =>
-      nil
-  | (id ::= a) =>
-      compile_aexp a ++ Isetvar id :: nil
-  | (c1 ;; c2) =>
-      compile_com c1 ++ compile_com c2
-  | IFB b THEN ifso ELSE ifnot FI =>
-      let code_ifso := compile_com ifso in
-      let code_ifnot := compile_com ifnot in
-      compile_bexp b false (length code_ifso + 1)
-      ++ code_ifso
-      ++ Ibranch_forward (length code_ifnot)
-      :: code_ifnot
-  | WHILE b DO body END =>
-      let code_body := compile_com body in
-      let code_test := compile_bexp b false (length code_body + 1) in
-      code_test
-      ++ code_body
-      ++ Ibranch_backward (length code_test + length code_body + 1)
-      :: nil
-  end.
--/
 inductive codeseq_at : code → ℕ → code → Prop
 | intro : ∀ code₁ code₂ code₃ pc, pc = length code₁ → codeseq_at (code₁ ++ code₂ ++ code₃) pc code₂
 
+
+lemma compile_aexp_correct :
+  ∀ code st e pc stk offsets,
+    codeseq_at code pc (compile_aexp offsets e 0).1
+    → star (veval code) (pc, stk) (pc + length (compile_aexp offsets e 0).1, aeval st e :: stk) :=
+sorry
+
+/-
+  forall C st a pc stk,
+  codeseq_at C pc (compile_aexp a) ->
+  star (transition C)
+       (pc, stk, st)
+       (pc + length (compile_aexp a), aeval st a :: stk, st).
+Proof.
+  induction a; simpl; intros.
+
+- (* ANum *)
+  apply star_one. apply trans_const. eauto with codeseq.
+
+- (* AId *)
+  apply star_one. apply trans_var. eauto with codeseq.
+
+- (* APlus *)
+  eapply star_trans.
+  apply IHa1. eauto with codeseq.
+  eapply star_trans.
+  apply IHa2. eauto with codeseq.
+  apply star_one. normalize. apply trans_add. eauto with codeseq.
+
+- (* AMinus *)
+  eapply star_trans.
+  apply IHa1. eauto with codeseq.
+  eapply star_trans.
+  apply IHa2. eauto with codeseq.
+  apply star_one. normalize. apply trans_sub. eauto with codeseq.
+
+- (* AMult *)
+  eapply star_trans.
+  apply IHa1. eauto with codeseq.
+  eapply star_trans.
+  apply IHa2. eauto with codeseq.
+  apply star_one. normalize. apply trans_mul. eauto with codeseq.
+Qed.
+-/
+
+-- TODO(dhs): is this _strong_ enough, with `offsets` an argument?
+-- TODO(dhs): is this _weak_ enough, to prove?
 theorem compile_correct_terminating_alt :
   ∀ code st c st',
     ceval c st st' →
-      ∀ offsets stk pc, codeseq_at code pc (compile_com c) →
+      ∀ offsets stk pc, codeseq_at code pc (compile_com offsets c) →
                 agree offsets st stk →
-                ∃ stk', star (veval code) (pc, stk) (pc + length (compile_com c), stk')
-                        ∧ agree offsets st' stk' :=
-sorry
+                ∃ stk', star (veval code) (pc, stk) (pc + length (compile_com offsets c), stk')
+                        ∧ agree offsets st' stk'
+| code ._ ._ ._ (eskip st) :=
+begin
+simp [compile_com, length],
+intros offsets stk pc H_codeseq H_agree,
+apply exists.intro stk,
+split,
+exact H_agree,
+apply star.rfl
+end
 
+| code ._ ._ ._ (eass st a n x H_aeval) :=
+begin
+simp [compile_com, length],
+intros offsets stk pc H_codeseq H_agree,
+
+end
+
+| code ._ ._ ._ (eseq c₁ c₂ st₁ st₂ st₃ H_c₁ H_c₂) :=
+begin
+
+end
+
+| code ._ ._ ._ (eift st₁ st₂ b c₁ c₂ H_beval_t H_ceval₁) :=
+begin
+
+end
+
+| code ._ ._ ._ (eiff st₁ st₂ b c₁ c₂ H_beval_f H_ceval₂) :=
+begin
+
+end
+
+| code ._ ._ ._ (ewhilet st₁ st₂ st₃ b c H_beval_t H_ceval_step H_ceval_loop) :=
+begin
+
+end
+
+| code ._ ._ ._ (ewhilef st b c H_beval_f) :=
+begin
+
+end
 
 end compiler
