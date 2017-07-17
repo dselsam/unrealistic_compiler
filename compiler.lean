@@ -142,12 +142,12 @@ inductive veval (c : code) : config -> config -> Prop
 | vadd   : ∀ pc stk n n₁ n₂, at_nth c pc iadd → n = n₁ + n₂ → veval (pc, n₂ :: n₁ :: stk) (pc + 1, n :: stk)
 | vsub   : ∀ pc stk n₁ n₂, at_nth c pc iadd → veval (pc, n₂ :: n₁ :: stk) (pc + 1, (n₁ - n₂) :: stk)
 | vmul   : ∀ pc stk n₁ n₂, at_nth c pc iadd → veval (pc, n₂ :: n₁ :: stk) (pc + 1, (n₁ * n₂) :: stk)
-| vbf    : ∀ pc stk ofs pc', at_nth c pc (ibf ofs) → pc' = pc + 1 + ofs → veval (pc, stk) (pc', stk)
+| vbf    : ∀ pc stk ofs pc', at_nth c pc (ibf ofs) → pc' = (pc + ofs) + 1 → veval (pc, stk) (pc', stk)
 | vbb    : ∀ pc stk ofs pc', at_nth c pc (ibf ofs) → pc' + ofs = pc + 1 → veval (pc, stk) (pc', stk)
-| vbeq   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ibeq ofs) → pc' = (if n₁ = n₂ then pc + 1 + ofs else pc + 1) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
-| vbne   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ibeq ofs) → pc' = (if n₁ = n₂ then pc + 1 else pc + 1 + ofs) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
-| vble   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ible ofs) → pc' = (if n₁ ≤ n₂ then pc + 1 + ofs else pc + 1) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
-| vbgt   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ibgt ofs) → pc' = (if n₁ ≤ n₂ then pc + 1 else pc + 1 + ofs) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
+| vbeq   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ibeq ofs) → pc' = (if n₁ = n₂ then (pc + ofs) + 1 else pc + 1) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
+| vbne   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ibeq ofs) → pc' = (if n₁ = n₂ then pc + 1 else (pc + ofs) + 1) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
+| vble   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ible ofs) → pc' = (if n₁ ≤ n₂ then (pc + ofs) + 1 else pc + 1) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
+| vbgt   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ibgt ofs) → pc' = (if n₁ ≤ n₂ then pc + 1 else (pc + ofs) + 1) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
 
 def vhalts (c : code) (stk_init stk_fin : stack) : Prop :=
 ∃ pc, at_nth c pc ihalt ∧ star (veval c) (0, stk_init) (pc, stk_fin)
@@ -170,11 +170,7 @@ compute_stack_offsets_core (collect_assigned_vars c) (mk_hash_map (λ (v : var),
 
 -- TODO(dhs): not sure if this is the best way to do it
 def agree (offsets : stack_offsets) (vofs : ℕ) (st : vstate) (stk : stack) : Prop :=
-  ∀ (v : var), st^.find v = nth stk (vofs + offsets^.dfind v)
-
--- TODO(dhs): simple
-lemma dagree_of_agree {offsets : stack_offsets} {vofs : ℕ} {st : vstate} {stk : stack} :
-  agree offsets vofs st stk → ∀ (v : var), st^.dfind v = dnth stk (vofs + offsets^.dfind v) := sorry
+  ∀ (v : var), st^.dfind v = dnth stk (offsets^.dfind v + vofs)
 
 lemma agree_push {offsets : stack_offsets} {vofs : ℕ} {st : vstate} {stk : stack} {n : ℕ} :
   agree offsets vofs st stk → agree offsets (vofs + 1) st (n :: stk) := sorry
@@ -192,15 +188,27 @@ def compile_aexp_core (offsets : stack_offsets) : aexp → ℕ → code
 def compile_aexp (offsets : stack_offsets) (e : aexp) := compile_aexp_core offsets e 0
 
 -- TODO(dhs): basic list property
+
+lemma at_nth_of_dnth_lt {α : Type*} [decidable_eq α] [inhabited α] {xs : list α} {idx : ℕ} :
+  idx < length xs → at_nth xs idx (dnth xs idx) := sorry
+
 lemma at_nth_of_len {α : Type*} {xs ys : list α} {x : α} {k : ℕ} : k = length xs → at_nth (xs ++ x :: ys) k x := sorry
+
+def astack_contains_vars (offsets : stack_offsets) (vofs : ℕ) (stk : stack) : aexp → Prop
+| (aexp.aconst n)   := true
+| (aexp.avar v)     := offsets^.dfind v + vofs < length stk
+| (aexp.aadd e₁ e₂) := astack_contains_vars e₁ ∧ astack_contains_vars e₂
+| (aexp.asub e₁ e₂) := astack_contains_vars e₁ ∧ astack_contains_vars e₂
+| (aexp.amul e₁ e₂) := astack_contains_vars e₁ ∧ astack_contains_vars e₂
 
 lemma compile_aexp_core_correct :
   ∀ code st e pc stk offsets vofs,
     codeseq_at code pc (compile_aexp_core offsets e vofs)
     → agree offsets vofs st stk
+    → astack_contains_vars offsets vofs stk e
     → star (veval code) (pc, stk) (pc + length (compile_aexp_core offsets e vofs), aeval st e :: stk)
-/-
-| .(_) st (aexp.aconst n) .(pc) stk offsets vofs (codeseq_at.intro code₁ ._ code₃ pc H_pc) H_agree :=
+
+| .(_) st (aexp.aconst n) .(pc) stk offsets vofs (codeseq_at.intro code₁ ._ code₃ pc H_pc) H_agree H_astack :=
 begin
 simp [compile_aexp_core, length, aeval],
 apply star.rtrans,
@@ -209,21 +217,20 @@ apply at_nth_of_len H_pc,
 apply star.rfl
 end
 
-| .(_) st (aexp.avar v) .(pc) stk offsets vofs (codeseq_at.intro code₁ ._ code₃ pc H_pc) H_agree :=
+| .(_) st (aexp.avar v) .(pc) stk offsets vofs (codeseq_at.intro code₁ ._ code₃ pc H_pc) H_agree H_astack :=
 begin
 simp [compile_aexp_core, length, aeval],
 apply star.rtrans,
 apply veval.vget,
 apply at_nth_of_len H_pc,
 simp [agree] at H_agree,
--- TODO(dhs): somehowe need to assume that v ∈ st, then easy
-have H_v_ok : v ∈ st := sorry,
-rw dagree_of_agree H_agree,
-exact sorry,
+simp [astack_contains_vars] at H_astack,
+rw H_agree,
+apply at_nth_of_dnth_lt H_astack,
 apply star.rfl
 end
--/
-| .(_) st (aexp.aadd e₁ e₂) .(pc) (n₂::n₁::stk) offsets vofs (codeseq_at.intro code₁ ._ code₃ pc H_pc) H_agree :=
+
+| .(_) st (aexp.aadd e₁ e₂) .(pc) stk offsets vofs (codeseq_at.intro code₁ ._ code₃ pc H_pc) H_agree H_stack :=
 begin
 simp [compile_aexp_core, length, aeval],
 apply star.trans,
@@ -239,24 +246,36 @@ have H_assoc :
 (code₁ ++ (compile_aexp_core offsets e₂ vofs ++ (compile_aexp_core offsets e₁ (vofs + 1) ++ iadd :: code₃)))
 =
 (code₁ ++ compile_aexp_core offsets e₂ vofs) ++ (compile_aexp_core offsets e₁ (vofs + 1)) ++ iadd :: code₃ := sorry,
-rw H_assoc,
+rw H_assoc, clear H_assoc,
 apply codeseq_at.intro _ _ _ _,
--- TODO(dhs): basic list property
-exact sorry,
+simp [H_pc, length_append],
 apply agree_push H_agree,
+
 -- Add instruction
 apply star.rtrans,
+have H_assoc :
+code₁ ++ (compile_aexp_core offsets e₂ vofs ++ (compile_aexp_core offsets e₁ (vofs + 1) ++ iadd :: code₃))
+=
+(code₁ ++ compile_aexp_core offsets e₂ vofs ++ compile_aexp_core offsets e₁ (vofs + 1)) ++ [iadd] ++ code₃ := sorry,
+rw H_assoc, clear H_assoc,
+
+have H_one_at_end :
+pc + (1 + (length (compile_aexp_core offsets e₂ vofs) + length (compile_aexp_core offsets e₁ (vofs + 1))))
+=
+(pc + length (compile_aexp_core offsets e₂ vofs) + length (compile_aexp_core offsets e₁ (vofs + 1))) + 1 := sorry,
+rw H_one_at_end, clear H_one_at_end,
 apply veval.vadd,
 
---apply at_nth_of_len H_pc,
+have H_cons :
+code₁ ++ compile_aexp_core offsets e₂ vofs ++ compile_aexp_core offsets e₁ (vofs + 1) ++ [iadd] ++ code₃
+=
+(code₁ ++ compile_aexp_core offsets e₂ vofs ++ compile_aexp_core offsets e₁ (vofs + 1)) ++ (iadd :: code₃) := sorry,
+rw H_cons, clear H_cons,
+apply at_nth_of_len,
+simp [H_pc, length_append],
+simp,
+apply star.rfl,
 
---exact sorry, -- codeseq_at
-
---apply compile_aexp_core_correct,
-
---apply veval.vadd,
---apply at_nth_of_len H_pc,
---apply star.rfl
 end
 
 
