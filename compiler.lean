@@ -17,6 +17,18 @@ match xs^.nth n with
 | none     := default α
 end
 
+def at_nth {α : Type*} (xs : list α) (idx : ℕ) (x : α) : Prop := nth xs idx = some x
+
+def set_nth {α : Type*} : list α → ℕ → α → option (list α)
+| (x::xs) 0     a := some (a :: xs)
+| (x::xs) (i+1) a := do ys ← set_nth xs i a, return (x :: ys)
+| []      _     _ := none
+
+lemma at_nth_of_dnth_lt {α : Type*} [decidable_eq α] [inhabited α] {xs : list α} {idx : ℕ} :
+  idx < length xs → at_nth xs idx (dnth xs idx) := sorry
+
+lemma at_nth_of_len {α : Type*} {xs ys : list α} {x : α} {k : ℕ} : k = length xs → at_nth (xs ++ x :: ys) k x := sorry
+
 end list
 namespace hash_map
 
@@ -128,13 +140,6 @@ open instruction
 @[reducible] def stack : Type := list ℕ
 @[reducible] def config : Type := ℕ × stack
 
-def at_nth {α : Type*} (xs : list α) (idx : ℕ) (x : α) : Prop := nth xs idx = some x
-
-def set_nth {α : Type*} : list α → ℕ → α → option (list α)
-| (x::xs) 0     a := some (a :: xs)
-| (x::xs) (i+1) a := do ys ← set_nth xs i a, return (x :: ys)
-| []      _     _ := none
-
 inductive veval (c : code) : config -> config -> Prop
 | vconst : ∀ pc stk n, at_nth c pc (iconst n) → veval (pc, stk) (pc + 1, n :: stk)
 | vget   : ∀ pc stk n v, at_nth c pc (iget n) → at_nth stk n v → veval (pc, stk) (pc + 1, v :: stk)
@@ -145,7 +150,7 @@ inductive veval (c : code) : config -> config -> Prop
 | vbf    : ∀ pc stk ofs pc', at_nth c pc (ibf ofs) → pc' = (pc + ofs) + 1 → veval (pc, stk) (pc', stk)
 | vbb    : ∀ pc stk ofs pc', at_nth c pc (ibf ofs) → pc' + ofs = pc + 1 → veval (pc, stk) (pc', stk)
 | vbeq   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ibeq ofs) → pc' = (if n₁ = n₂ then (pc + ofs) + 1 else pc + 1) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
-| vbne   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ibeq ofs) → pc' = (if n₁ = n₂ then pc + 1 else (pc + ofs) + 1) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
+| vbne   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ibne ofs) → pc' = (if n₁ = n₂ then pc + 1 else (pc + ofs) + 1) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
 | vble   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ible ofs) → pc' = (if n₁ ≤ n₂ then (pc + ofs) + 1 else pc + 1) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
 | vbgt   : ∀ pc stk ofs n₁ n₂ pc', at_nth c pc (ibgt ofs) → pc' = (if n₁ ≤ n₂ then pc + 1 else (pc + ofs) + 1) → veval (pc, n₂ :: n₁ :: stk) (pc', stk)
 
@@ -187,25 +192,19 @@ def compile_aexp_core (offsets : stack_offsets) : aexp → ℕ → code
 
 def compile_aexp (offsets : stack_offsets) (e : aexp) := compile_aexp_core offsets e 0
 
--- TODO(dhs): basic list property
-
-lemma at_nth_of_dnth_lt {α : Type*} [decidable_eq α] [inhabited α] {xs : list α} {idx : ℕ} :
-  idx < length xs → at_nth xs idx (dnth xs idx) := sorry
-
-lemma at_nth_of_len {α : Type*} {xs ys : list α} {x : α} {k : ℕ} : k = length xs → at_nth (xs ++ x :: ys) k x := sorry
-
-def astack_contains_vars (offsets : stack_offsets) (vofs : ℕ) (stk : stack) : aexp → Prop
-| (aexp.aconst n)   := true
-| (aexp.avar v)     := offsets^.dfind v + vofs < length stk
-| (aexp.aadd e₁ e₂) := astack_contains_vars e₁ ∧ astack_contains_vars e₂
-| (aexp.asub e₁ e₂) := astack_contains_vars e₁ ∧ astack_contains_vars e₂
-| (aexp.amul e₁ e₂) := astack_contains_vars e₁ ∧ astack_contains_vars e₂
+-- TODO(dhs): weaken the forall?
+def astack_contains_vars (offsets : stack_offsets) : stack → ℕ → aexp → Prop
+| stk vofs (aexp.aconst n)   := true
+| stk vofs (aexp.avar v)     := offsets^.dfind v + vofs < length stk
+| stk vofs (aexp.aadd e₁ e₂) := astack_contains_vars stk vofs e₂ ∧ ∀ x, astack_contains_vars (x :: stk) (vofs + 1) e₁
+| stk vofs (aexp.asub e₁ e₂) := astack_contains_vars stk vofs e₂ ∧ ∀ x, astack_contains_vars (x :: stk) (vofs + 1) e₁
+| stk vofs (aexp.amul e₁ e₂) := astack_contains_vars stk vofs e₂ ∧ ∀ x, astack_contains_vars (x :: stk) (vofs + 1) e₁
 
 lemma compile_aexp_core_correct :
   ∀ code st e pc stk offsets vofs,
     codeseq_at code pc (compile_aexp_core offsets e vofs)
     → agree offsets vofs st stk
-    → astack_contains_vars offsets vofs stk e
+    → astack_contains_vars offsets stk vofs e
     → star (veval code) (pc, stk) (pc + length (compile_aexp_core offsets e vofs), aeval st e :: stk)
 
 | .(_) st (aexp.aconst n) .(pc) stk offsets vofs (codeseq_at.intro code₁ ._ code₃ pc H_pc) H_agree H_astack :=
@@ -230,18 +229,17 @@ apply at_nth_of_dnth_lt H_astack,
 apply star.rfl
 end
 
-| .(_) st (aexp.aadd e₁ e₂) .(pc) stk offsets vofs (codeseq_at.intro code₁ ._ code₃ pc H_pc) H_agree H_stack :=
+| .(_) st (aexp.aadd e₁ e₂) .(pc) stk offsets vofs (codeseq_at.intro code₁ ._ code₃ pc H_pc) H_agree H_astack :=
 begin
 simp [compile_aexp_core, length, aeval],
 apply star.trans,
 -- Compile e₂
-apply compile_aexp_core_correct _ st e₂ _ _ offsets vofs,
+apply compile_aexp_core_correct _ st e₂ _ _ offsets vofs _ H_agree (and.left H_astack),
 rw ← append_assoc,
 apply codeseq_at.intro _ _ _ _ H_pc,
-exact H_agree,
 -- Compile e₁
 apply star.trans,
-apply compile_aexp_core_correct _ st e₁ _ _ offsets (vofs+1),
+apply compile_aexp_core_correct _ st e₁ _ _ offsets (vofs+1) _ (agree_push H_agree) (and.right H_astack _),
 have H_assoc :
 (code₁ ++ (compile_aexp_core offsets e₂ vofs ++ (compile_aexp_core offsets e₁ (vofs + 1) ++ iadd :: code₃)))
 =
@@ -249,7 +247,6 @@ have H_assoc :
 rw H_assoc, clear H_assoc,
 apply codeseq_at.intro _ _ _ _,
 simp [H_pc, length_append],
-apply agree_push H_agree,
 
 -- Add instruction
 apply star.rtrans,
@@ -278,7 +275,6 @@ apply star.rfl,
 
 end
 
-
 def compile_bexp (offsets : stack_offsets) : bexp → bool → ℕ → code
 | (bexp.btrue)      cond ofs := if cond then [ibf ofs] else []
 | (bexp.bfalse)     cond ofs := if cond then [] else [ibf ofs]
@@ -287,10 +283,74 @@ def compile_bexp (offsets : stack_offsets) : bexp → bool → ℕ → code
                                     code₁ := compile_bexp b₁ false (if cond then length code₂ else ofs + length code₂)
                                 in  code₁ ++ code₂
 
-| (bexp.beq e₁ e₂)  cond ofs := compile_aexp_core offsets e₁ 0 ++ compile_aexp_core offsets e₂ 1 ++ (if cond then [ibeq ofs] else [ibne ofs])
-| (bexp.ble e₁ e₂)  cond ofs := compile_aexp_core offsets e₁ 0 ++ compile_aexp_core offsets e₂ 1 ++ (if cond then [ible ofs] else [ibgt ofs])
+| (bexp.beq e₁ e₂)  cond ofs := compile_aexp_core offsets e₂ 0 ++ compile_aexp_core offsets e₁ 1 ++ (if cond then [ibeq ofs] else [ibne ofs])
+| (bexp.ble e₁ e₂)  cond ofs := compile_aexp_core offsets e₂ 0 ++ compile_aexp_core offsets e₁ 1 ++ (if cond then [ible ofs] else [ibgt ofs])
 
+-- TODO(dhs): weaken the forall?
+-- TODO(dhs): is this even right? We'll see soon.
+def bstack_contains_vars (offsets : stack_offsets) : stack → bexp → Prop
+| stk (bexp.btrue)      := true
+| stk (bexp.bfalse)     := true
+| stk (bexp.bnot b)     := bstack_contains_vars stk b
+| stk (bexp.band b₁ b₂) := bstack_contains_vars stk b₂ ∧ bstack_contains_vars stk b₁
+| stk (bexp.beq e₁ e₂)  := astack_contains_vars offsets stk 0 e₂ ∧ ∀ x, astack_contains_vars offsets (x::stk) 1 e₁
+| stk (bexp.ble e₁ e₂)  := astack_contains_vars offsets stk 0 e₂ ∧ ∀ x, astack_contains_vars offsets (x::stk) 1 e₁
 
+--set_option pp.all true
+--set_option trace.type_context.is_def_eq true
+--set_option trace.type_context.is_def_eq_detail true
+
+lemma compile_bexp_correct :
+  ∀ code st b cond ofs pc stk offsets,
+    codeseq_at code pc (compile_bexp offsets b cond ofs)
+    → agree offsets 0 st stk
+    → bstack_contains_vars offsets stk b
+    → star (veval code) (pc, stk)
+                        (pc + (length (compile_bexp offsets b cond ofs) + ite (beval st b = cond) ofs 0), stk)
+/-
+| .(_) st (bexp.btrue) cond ofs .(pc) stk offsets (codeseq_at.intro code₁ ._ code₃ pc H_pc) H_agree H_bstack :=
+begin
+simp [compile_bexp, compile_aexp_core, length, aeval, beval],
+cases cond,
+{ simp, apply star.rfl },
+simp,
+apply star.rtrans,
+apply veval.vbf _ _ ofs,
+apply at_nth_of_len H_pc,
+simp,
+apply star.rfl
+end
+
+| .(_) st (bexp.bfalse) cond ofs .(pc) stk offsets (codeseq_at.intro code₁ ._ code₃ pc H_pc) H_agree H_bstack :=
+begin
+simp [compile_bexp, compile_aexp_core, length, aeval, beval],
+cases cond,
+{ simp, apply star.rtrans, apply veval.vbf _ _ ofs, apply at_nth_of_len H_pc, simp, apply star.rfl },
+{ simp, apply star.rfl },
+end
+-/
+
+| .(_) st (bexp.bnot b) cond ofs .(pc) stk offsets (codeseq_at.intro code₁ ._ code₃ pc H_pc) H_agree H_bstack :=
+begin
+simp [compile_bexp, compile_aexp_core, length, aeval, beval],
+-- TODO(dhs): come on, Lean
+have H_bnot : ∀ beq, (@ite (bnot (beval st b) = cond) beq _ ofs 0) = (ite (beval st b = bnot cond) ofs 0) := sorry,
+rw H_bnot, clear H_bnot,
+
+apply compile_bexp_correct (code₁ ++ (compile_bexp offsets b (bnot cond) ofs ++ code₃)) st b (bnot cond) ofs pc stk offsets _ H_agree H_bstack,
+rw ← append_assoc,
+apply codeseq_at.intro _ _ _ _ H_pc,
+
+end
+/-
+
+  forall C st b cond ofs pc stk,
+  codeseq_at C pc (compile_bexp b cond ofs) ->
+  star (transition C)
+       (pc, stk, st)
+       (pc + length (compile_bexp b cond ofs) + if eqb (beval st b) cond then ofs else 0, stk, st).
+-/
+#exit
 -- Example program
 ---------------------------
 -- (cass `x 1)
@@ -316,51 +376,6 @@ definition compile_com (offsets : stack_offsets) : com → code
                        code_test := compile_bexp offsets b ff (length code_body + 1)
                    in  code_test ++ code_body ++ [ibb (length code_test + length code_body + 1)]
 
-
-
-lemma compile_aexp_correct :
-  ∀ code st e pc stk offsets,
-    codeseq_at code pc (compile_aexp offsets e 0).1
-    → star (veval code) (pc, stk) (pc + length (compile_aexp offsets e 0).1, aeval st e :: stk) :=
-sorry
-
-/-
-  forall C st a pc stk,
-  codeseq_at C pc (compile_aexp a) ->
-  star (transition C)
-       (pc, stk, st)
-       (pc + length (compile_aexp a), aeval st a :: stk, st).
-Proof.
-  induction a; simpl; intros.
-
-- (* ANum *)
-  apply star_one. apply trans_const. eauto with codeseq.
-
-- (* AId *)
-  apply star_one. apply trans_var. eauto with codeseq.
-
-- (* APlus *)
-  eapply star_trans.
-  apply IHa1. eauto with codeseq.
-  eapply star_trans.
-  apply IHa2. eauto with codeseq.
-  apply star_one. normalize. apply trans_add. eauto with codeseq.
-
-- (* AMinus *)
-  eapply star_trans.
-  apply IHa1. eauto with codeseq.
-  eapply star_trans.
-  apply IHa2. eauto with codeseq.
-  apply star_one. normalize. apply trans_sub. eauto with codeseq.
-
-- (* AMult *)
-  eapply star_trans.
-  apply IHa1. eauto with codeseq.
-  eapply star_trans.
-  apply IHa2. eauto with codeseq.
-  apply star_one. normalize. apply trans_mul. eauto with codeseq.
-Qed.
--/
 
 -- TODO(dhs): is this _strong_ enough, with `offsets` an argument?
 -- TODO(dhs): is this _weak_ enough, to prove?
