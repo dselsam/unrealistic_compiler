@@ -280,7 +280,7 @@ def compile_bexp (offsets : stack_offsets) : bexp → bool → ℕ → code
 | (bexp.bfalse)     cond ofs := if cond then [] else [ibf ofs]
 | (bexp.bnot b)     cond ofs := compile_bexp b (bnot cond) ofs
 | (bexp.band b₁ b₂) cond ofs := let code₂ := compile_bexp b₂ cond ofs,
-                                    code₁ := compile_bexp b₁ false (if cond then length code₂ else ofs + length code₂)
+                                    code₁ := compile_bexp b₁ ff (if cond then length code₂ else ofs + length code₂)
                                 in  code₁ ++ code₂
 
 | (bexp.beq e₁ e₂)  cond ofs := compile_aexp_core offsets e₂ 0 ++ compile_aexp_core offsets e₁ 1 ++ (if cond then [ibeq ofs] else [ibne ofs])
@@ -292,7 +292,7 @@ def bstack_contains_vars (offsets : stack_offsets) : stack → bexp → Prop
 | stk (bexp.btrue)      := true
 | stk (bexp.bfalse)     := true
 | stk (bexp.bnot b)     := bstack_contains_vars stk b
-| stk (bexp.band b₁ b₂) := bstack_contains_vars stk b₂ ∧ bstack_contains_vars stk b₁
+| stk (bexp.band b₁ b₂) := bstack_contains_vars stk b₁ ∧ bstack_contains_vars stk b₂
 | stk (bexp.beq e₁ e₂)  := astack_contains_vars offsets stk 0 e₂ ∧ ∀ x, astack_contains_vars offsets (x::stk) 1 e₁
 | stk (bexp.ble e₁ e₂)  := astack_contains_vars offsets stk 0 e₂ ∧ ∀ x, astack_contains_vars offsets (x::stk) 1 e₁
 
@@ -328,7 +328,7 @@ cases cond,
 { simp, apply star.rtrans, apply veval.vbf _ _ ofs, apply at_nth_of_len H_pc, simp, apply star.rfl },
 { simp, apply star.rfl },
 end
--/
+
 
 | .(_) st (bexp.bnot b) cond ofs .(pc) stk offsets (codeseq_at.intro code₁ ._ code₃ pc H_pc) H_agree H_bstack :=
 begin
@@ -342,6 +342,64 @@ rw ← append_assoc,
 apply codeseq_at.intro _ _ _ _ H_pc,
 
 end
+-/
+
+| .(_) st (bexp.band b₁ b₂) cond ofs .(pc) stk offsets (codeseq_at.intro code₁ ._ code₃ pc H_pc) H_agree H_bstack :=
+begin
+simp [compile_bexp, compile_aexp_core, length, aeval, beval],
+-- b₁
+apply star.trans,
+
+have H_assoc :
+(code₁ ++
+          (compile_bexp offsets b₁ ff
+               (ite ↑cond (length (compile_bexp offsets b₂ cond ofs))
+                  (ofs + length (compile_bexp offsets b₂ cond ofs))) ++
+             (compile_bexp offsets b₂ cond ofs ++ code₃)))
+=
+(code₁ ++
+          (compile_bexp offsets b₁ ff
+               (ite ↑cond (length (compile_bexp offsets b₂ cond ofs))
+                  (ofs + length (compile_bexp offsets b₂ cond ofs)))) ++
+             (compile_bexp offsets b₂ cond ofs ++ code₃)) := sorry,
+rw H_assoc, clear H_assoc,
+
+apply compile_bexp_correct _ st b₁ ff _ pc stk offsets _ H_agree (and.left H_bstack),
+tactic.rotate 1,
+apply codeseq_at.intro _ _ _ _ H_pc,
+
+-- b₂
+apply star.trans,
+have H_assoc :
+(code₁ ++
+          (compile_bexp offsets b₁ ff
+               (ite ↑cond (length (compile_bexp offsets b₂ cond ofs))
+                  (ofs + length (compile_bexp offsets b₂ cond ofs))) ++
+             (compile_bexp offsets b₂ cond ofs ++ code₃)))
+=
+(code₁ ++ compile_bexp offsets b₁ ff (ite ↑cond (length (compile_bexp offsets b₂ cond ofs))
+                  (ofs + length (compile_bexp offsets b₂ cond ofs)))) ++ compile_bexp offsets b₂ cond ofs ++ code₃ := sorry,
+rw H_assoc, clear H_assoc,
+apply compile_bexp_correct _ st b₂ cond _ _ stk offsets,
+apply codeseq_at.intro,
+simp [H_pc],
+apply congr_arg,
+
+cases cond,
+have H_em : (beval st b₁ = ff ∨ beval st b₂ ≠ ff) := sorry,
+cases H_em with H_eq H_neq,
+simp [H_eq],
+
+
+
+/-
+apply compile_bexp_correct (code₁ ++ (compile_bexp offsets b (bnot cond) ofs ++ code₃)) st b (bnot cond) ofs pc stk offsets _ H_agree H_bstack,
+rw ← append_assoc,
+apply codeseq_at.intro _ _ _ _ H_pc,
+-/
+end
+
+
 /-
 
   forall C st b cond ofs pc stk,
