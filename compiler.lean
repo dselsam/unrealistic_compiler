@@ -368,6 +368,25 @@ apply compile_bexp_correct _ st b₁ ff _ pc stk offsets _ H_agree (and.left H_b
 tactic.rotate 1,
 apply codeseq_at.intro _ _ _ _ H_pc,
 
+--
+cases cond,
+simp,
+have H_em : (beval st b₁ = ff ∨ beval st b₁ = tt) := sorry,
+cases H_em with H_ff H_tt,
+simp [H_ff],
+apply star.rfl,
+simp [H_tt],
+have H_assoc :
+(code₁ ++
+          (compile_bexp offsets b₁ ff (ofs + length (compile_bexp offsets b₂ ff ofs)) ++
+             (compile_bexp offsets b₂ ff ofs ++ code₃)))
+=
+(code₁ ++ compile_bexp offsets b₁ ff (ofs + length (compile_bexp offsets b₂ ff ofs)) ++ (compile_bexp offsets b₂ ff ofs ++ code₃)) := sorry,
+rw H_assoc, clear H_assoc,
+
+apply compile_bexp_correct _ st b₂ _ _ _ stk offsets,
+
+/-
 -- b₂
 apply star.trans,
 have H_assoc :
@@ -384,11 +403,7 @@ apply compile_bexp_correct _ st b₂ cond _ _ stk offsets,
 apply codeseq_at.intro,
 simp [H_pc],
 apply congr_arg,
-
-cases cond,
-have H_em : (beval st b₁ = ff ∨ beval st b₂ ≠ ff) := sorry,
-cases H_em with H_eq H_neq,
-simp [H_eq],
+-/
 
 
 
