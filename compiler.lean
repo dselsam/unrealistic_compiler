@@ -180,6 +180,11 @@ def agree (offsets : stack_offsets) (vofs : ℕ) (st : vstate) (stk : stack) : P
 lemma agree_push {offsets : stack_offsets} {vofs : ℕ} {st : vstate} {stk : stack} {n : ℕ} :
   agree offsets vofs st stk → agree offsets (vofs + 1) st (n :: stk) := sorry
 
+lemma agree_insert {offsets : stack_offsets} {vofs : ℕ} {st : vstate} {stk : stack} :
+  agree offsets vofs st stk →
+  ∀ v n,
+  agree offsets vofs (hash_map.insert st v n) (update_nth stk (hash_map.dfind offsets v) n) := sorry
+
 inductive codeseq_at : code → ℕ → code → Prop
 | intro : ∀ code₁ code₂ code₃ pc, pc = length code₁ → codeseq_at (code₁ ++ code₂ ++ code₃) pc code₂
 
@@ -384,46 +389,33 @@ have H_assoc :
 (code₁ ++ compile_bexp offsets b₁ ff (ofs + length (compile_bexp offsets b₂ ff ofs)) ++ (compile_bexp offsets b₂ ff ofs ++ code₃)) := sorry,
 rw H_assoc, clear H_assoc,
 
-apply compile_bexp_correct _ st b₂ _ _ _ stk offsets,
+-- TODO(dhs): why won't it unify?
+have H_come_on_lean : ∀ bdec, @ite (beval st b₂ = ff) bdec _ ofs 0 = ite (beval st b₂ = ff) ofs 0 := sorry,
 
-/-
--- b₂
-apply star.trans,
+have H_rec₂ := compile_bexp_correct (code₁ ++ compile_bexp offsets b₁ ff (ofs + length (compile_bexp offsets b₂ ff ofs)) ++
+          (compile_bexp offsets b₂ ff ofs ++ code₃)) st b₂ ff ofs (pc + length (compile_bexp offsets b₁ ff (ofs + length (compile_bexp offsets b₂ ff ofs)))) stk offsets,
+simp [H_come_on_lean] at H_rec₂,
+simp [H_come_on_lean],
+apply H_rec₂,
+clear H_rec₂,
 have H_assoc :
-(code₁ ++
-          (compile_bexp offsets b₁ ff
-               (ite ↑cond (length (compile_bexp offsets b₂ cond ofs))
-                  (ofs + length (compile_bexp offsets b₂ cond ofs))) ++
-             (compile_bexp offsets b₂ cond ofs ++ code₃)))
+    (code₁ ++
+       (compile_bexp offsets b₁ ff (ofs + length (compile_bexp offsets b₂ ff ofs)) ++
+          (compile_bexp offsets b₂ ff ofs ++ code₃)))
 =
-(code₁ ++ compile_bexp offsets b₁ ff (ite ↑cond (length (compile_bexp offsets b₂ cond ofs))
-                  (ofs + length (compile_bexp offsets b₂ cond ofs)))) ++ compile_bexp offsets b₂ cond ofs ++ code₃ := sorry,
+    (code₁ ++ compile_bexp offsets b₁ ff (ofs + length (compile_bexp offsets b₂ ff ofs))) ++
+          compile_bexp offsets b₂ ff ofs ++ code₃ := sorry,
 rw H_assoc, clear H_assoc,
-apply compile_bexp_correct _ st b₂ cond _ _ stk offsets,
 apply codeseq_at.intro,
 simp [H_pc],
-apply congr_arg,
--/
+exact H_agree,
+exact and.right H_bstack,
 
-
-
-/-
-apply compile_bexp_correct (code₁ ++ (compile_bexp offsets b (bnot cond) ofs ++ code₃)) st b (bnot cond) ofs pc stk offsets _ H_agree H_bstack,
-rw ← append_assoc,
-apply codeseq_at.intro _ _ _ _ H_pc,
--/
+-- cond = tt
+exact sorry
 end
 
 
-/-
-
-  forall C st b cond ofs pc stk,
-  codeseq_at C pc (compile_bexp b cond ofs) ->
-  star (transition C)
-       (pc, stk, st)
-       (pc + length (compile_bexp b cond ofs) + if eqb (beval st b) cond then ofs else 0, stk, st).
--/
-#exit
 -- Example program
 ---------------------------
 -- (cass `x 1)
@@ -456,9 +448,9 @@ theorem compile_correct_terminating_alt :
   ∀ code st c st',
     ceval c st st' →
       ∀ offsets stk pc, codeseq_at code pc (compile_com offsets c) →
-                agree offsets st stk →
+                agree offsets 0 st stk →
                 ∃ stk', star (veval code) (pc, stk) (pc + length (compile_com offsets c), stk')
-                        ∧ agree offsets st' stk'
+                        ∧ agree offsets 0 st' stk'
 | code ._ ._ ._ (eskip st) :=
 begin
 simp [compile_com, length],
@@ -473,7 +465,10 @@ end
 begin
 simp [compile_com, length],
 intros offsets stk pc H_codeseq H_agree,
-
+apply exists.intro (update_nth stk (offsets^.dfind x) n),
+split,
+apply agree_insert H_agree,
+apply compile_aexp_core_correct,
 end
 
 | code ._ ._ ._ (eseq c₁ c₂ st₁ st₂ st₃ H_c₁ H_c₂) :=
