@@ -28,6 +28,9 @@ lemma subset_trans [decidable_eq α] {xs zs : list α} (ys : list α) : xs ⊆ y
 lemma subset_union_left [decidable_eq α] (xs ys zs : list α) : xs ⊆ ys → xs ⊆ ys ∪ zs := sorry
 lemma subset_union_right [decidable_eq α] (xs ys zs : list α) : xs ⊆ zs → xs ⊆ ys ∪ zs := sorry
 
+lemma subset_pre_union_left [decidable_eq α] {xs ys zs : list α} : xs ∪ ys ⊆ zs → xs ⊆ zs := sorry
+lemma subset_pre_union_right [decidable_eq α] {xs ys zs : list α} : xs ∪ ys ⊆ zs → ys ⊆ zs := sorry
+
 lemma subset_union_trans_right [decidable_eq α] {xs ys zs} (ws : list α) : zs ⊆ ws → xs ⊆ ys ∪ zs → xs ⊆ ys ∪ ws := sorry
 lemma subset_union_trans_left [decidable_eq α] {xs ys zs} (ws : list α) : ys ⊆ ws → xs ⊆ ys ∪ zs → xs ⊆ ws ∪ zs := sorry
 
@@ -37,6 +40,10 @@ lemma at_nth_of_dnth_lt [decidable_eq α] [inhabited α] {xs : list α} {idx : �
   idx < length xs → at_nth xs idx (dnth xs idx) := sorry
 
 lemma at_nth_of_len {xs ys : list α} {x : α} {k : ℕ} : k = length xs → at_nth (xs ++ x :: ys) k x := sorry
+
+lemma mem_of_singleton_subset [decidable_eq α] -- TODO(dhs): current spot
+H_ss : [v] ⊆ L
+⊢ v ∈ L
 
 end list
 
@@ -319,5 +326,61 @@ intros H H_ss x H_mem,
 simp [H x (H_ss H_mem)]
 end
 
+/- Agreement on the free variables of an expression implies that this
+    expression evaluates identically in both states. -/
+
+lemma aeval_agree (L : list var) (st₁ st₂ : vstate) (H_agree : agree L st₁ st₂) :
+  ∀ (e : aexp), fv_aexp e ⊆ L → aeval st₁ e = aeval st₂ e
+| (aexp.aconst n) := λ H_ss, rfl
+
+| (aexp.avar v)   :=
+begin
+simp [fv_aexp, aeval],
+intro H_ss,
+apply H_agree,
+apply mem_of_subset
+end
+
+| (aexp.aadd e₁ e₂) :=
+begin
+simp [fv_aexp, aeval],
+intro H_ss,
+have H₁ : aeval st₁ e₁ = aeval st₂ e₁,
+{ apply aeval_agree, exact subset_pre_union_left H_ss },
+have H₂ : aeval st₁ e₂ = aeval st₂ e₂,
+{ apply aeval_agree, exact subset_pre_union_right H_ss },
+simp [H₁, H₂]
+end
+
+| (aexp.asub e₁ e₂) :=
+begin
+simp [fv_aexp, aeval],
+intro H_ss,
+have H₁ : aeval st₁ e₁ = aeval st₂ e₁,
+{ apply aeval_agree, exact subset_pre_union_left H_ss },
+have H₂ : aeval st₁ e₂ = aeval st₂ e₂,
+{ apply aeval_agree, exact subset_pre_union_right H_ss },
+simp [H₁, H₂]
+end
+
+| (aexp.amul e₁ e₂) :=
+begin
+simp [fv_aexp, aeval],
+intro H_ss,
+have H₁ : aeval st₁ e₁ = aeval st₂ e₁,
+{ apply aeval_agree, exact subset_pre_union_left H_ss },
+have H₂ : aeval st₁ e₂ = aeval st₂ e₂,
+{ apply aeval_agree, exact subset_pre_union_right H_ss },
+simp [H₁, H₂]
+end
+
+lemma beval_agree (L : list var) (st₁ st₂ : vstate) (H_agree : agree L st₁ st₂) :
+  ∀ (b : bexp), fv_bexp b ⊆ L → beval st₁ b = beval st₂ b
+| (bexp.btrue)      H_ss := tt
+| (bexp.bfalse)     H_ss := sorry
+| (bexp.bnot b)     H_ss := sorry
+| (bexp.band b₁ b₂) H_ss := sorry
+| (bexp.beq e₁ e₂)  H_ss := sorry
+| (bexp.ble e₁ e₂)  H_ss := sorry
 
 end compiler
