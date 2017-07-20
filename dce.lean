@@ -1,32 +1,42 @@
-import data.hash_map library_dev.data.list.set
+import data.hash_map
 
 universe u
 
 namespace list
+variable {α : Type u}
 
-def dnth {α : Type*} [decidable_eq α] [inhabited α] (xs : list α) (n : ℕ) : α :=
+def dnth [decidable_eq α] [inhabited α] (xs : list α) (n : ℕ) : α :=
 match xs^.nth n with
 | (some x) := x
 | none     := default α
 end
 
-def at_nth {α : Type*} (xs : list α) (idx : ℕ) (x : α) : Prop := nth xs idx = some x
+def at_nth (xs : list α) (idx : ℕ) (x : α) : Prop := nth xs idx = some x
 
-def set_nth {α : Type*} : list α → ℕ → α → option (list α)
+def set_nth : list α → ℕ → α → option (list α)
 | (x::xs) 0     a := some (a :: xs)
 | (x::xs) (i+1) a := do ys ← set_nth xs i a, return (x :: ys)
 | []      _     _ := none
 
-instance decidable_subset {α : Type*} [decidable_eq α] (xs ys : list α) : decidable (xs ⊆ ys) :=
+instance decidable_subset [decidable_eq α] (xs ys : list α) : decidable (xs ⊆ ys) :=
 begin
 simp [has_subset.subset, list.subset],
 apply_instance
 end
 
-lemma at_nth_of_dnth_lt {α : Type*} [decidable_eq α] [inhabited α] {xs : list α} {idx : ℕ} :
+lemma subset_trans [decidable_eq α] {xs zs : list α} (ys : list α) : xs ⊆ ys → ys ⊆ zs → xs ⊆ zs := sorry
+lemma subset_union_left [decidable_eq α] (xs ys zs : list α) : xs ⊆ ys → xs ⊆ ys ∪ zs := sorry
+lemma subset_union_right [decidable_eq α] (xs ys zs : list α) : xs ⊆ zs → xs ⊆ ys ∪ zs := sorry
+
+lemma subset_union_trans_right [decidable_eq α] {xs ys zs} (ws : list α) : zs ⊆ ws → xs ⊆ ys ∪ zs → xs ⊆ ys ∪ ws := sorry
+lemma subset_union_trans_left [decidable_eq α] {xs ys zs} (ws : list α) : ys ⊆ ws → xs ⊆ ys ∪ zs → xs ⊆ ws ∪ zs := sorry
+
+lemma remove_all_subset [decidable_eq α] (xs ys zs : list α) : xs ⊆ zs → remove_all xs ys ⊆ zs := sorry
+
+lemma at_nth_of_dnth_lt [decidable_eq α] [inhabited α] {xs : list α} {idx : ℕ} :
   idx < length xs → at_nth xs idx (dnth xs idx) := sorry
 
-lemma at_nth_of_len {α : Type*} {xs ys : list α} {x : α} {k : ℕ} : k = length xs → at_nth (xs ++ x :: ys) k x := sorry
+lemma at_nth_of_len {xs ys : list α} {x : α} {k : ℕ} : k = length xs → at_nth (xs ++ x :: ys) k x := sorry
 
 end list
 
@@ -205,6 +215,109 @@ end
 
 end fixpoint
 
+
+/- Liveness analysis. -/
+
+/- [L] is the set of variables live "after" command [c].
+  The result of [live c L] is the set of variables live "before" [c]. -/
+
+def live : com → list var → list var
+| cskip         L := L
+| (cass x e)    L := if x ∈ L then remove_all L [x] else fv_aexp e
+| (cseq c₁ c₂)  L := live c₁ (live c₂ L)
+| (cif b c₁ c₂) L := fv_bexp b ∪ live c₁ L ∪ live c₂ L
+| (cwhile b c)  L := let L' := fv_bexp b ∪ L,
+                         dflt := fv_com (cwhile b c) ∪ L
+                     in  fixpoint (λ x, L' ∪ live c x) dflt
+
+lemma live_upper_bound : ∀ (c : com) (L : list var), live c L ⊆ fv_com c ∪ L
+| cskip         L :=
+begin
+simp [live],
+apply subset_union_right, apply subset.refl
+end
+
+| (cass x e)    L :=
+begin
+simp [live, fv_com],
+have H_em : x ∈ L ∨ ¬ (x ∈ L) := decidable.em _,
+cases H_em with H_mem H_nmem,
+{ simp [H_mem], apply subset_union_right, apply remove_all_subset, apply subset.refl },
+{ simp [H_nmem], apply subset_union_left, apply subset.refl }
+end
+
+| (cseq c₁ c₂)  L :=
+begin
+simp [live, fv_com],
+have H₁ : live c₂ L ⊆ fv_com c₂ ∪ L := by apply live_upper_bound,
+have H₂ : live c₁ (live c₂ L) ⊆ fv_com c₁ ∪ live c₂ L := by apply live_upper_bound,
+exact sorry -- TODO(dhs): simple but missing lemmas
+end
+
+| (cif b c₁ c₂) L :=
+begin
+simp [live, fv_com],
+exact sorry -- TODO(dhs): simple
+end
+
+| (cwhile b c)  L :=
+begin
+simp [live, fv_com],
+apply fixpoint_upper_bound,
+intros start H,
+have H_suff : live c start ⊆ fv_com c ∪ L,
+exact sorry, -- TODO(dhs): easy
+exact sorry -- TODO(dhs): easy
+end
+
+lemma live_while_charact (b : bexp) (c : com) (L : list var) :
+  let L' := live (cwhile b c) L in
+  fv_bexp b ⊆  L' ∧ L ⊆ L' ∧ live c L' ⊆ L' :=
+begin
+dsimp,
+have H := fixpoint_charact (λ xs, fv_bexp b ∪ L ∪ live c xs) (fv_bexp b ∪ fv_com c ∪ L),
+cases H with H H,
+split,
+{ exact sorry },
+{ exact sorry },
+split,
+{ simp [live, fv_com], rw H, apply subset_union_left, apply subset_union_left, apply subset.refl },
+split,
+{ simp [live, fv_com, H], apply subset_union_right, apply subset.refl  },
+{ simp [live, fv_com, H], apply subset_trans, apply live_upper_bound, exact sorry } -- TODO(dhs): easy
+end
+
+/- 3. Dead code elimination -/
+
+/- Code transformation -/
+
+/- The code transformation turns assignments [x ::= a] to dead variables [x]
+  into [SKIP] statements. -/
+
+def dce : com → list var → com
+| cskip         L := cskip
+| (cass x e)    L := if x ∈ L then cass x e else cskip
+| (cseq c₁ c₂)  L := cseq (dce c₁ (live c₂ L)) (dce c₂ L)
+| (cif b c₁ c₂) L := cif b (dce c₁ L) (dce c₂ L)
+| (cwhile b c)  L := cwhile b (dce c $ live (cwhile b c) L)
+
+/- Semantic correctness -/
+
+/- Two states agree on a set [L] of live variables if they assign
+  the same values to each live variable. -/
+
+def agree (L : list var) (st₁ st₂: vstate) : Prop :=
+  ∀ x, x ∈ L → st₁^.dfind x = st₂^.dfind x
+
+/- Monotonicity property. -/
+
+lemma agree_monotonic (L L' : list var) (st₁ st₂ : vstate) :
+  agree L' st₁ st₂ → L ⊆ L' → agree L st₁ st₂ :=
+begin
+simp [agree],
+intros H H_ss x H_mem,
+simp [H x (H_ss H_mem)]
+end
 
 
 end compiler
