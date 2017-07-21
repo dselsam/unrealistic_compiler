@@ -2,6 +2,26 @@ import data.hash_map
 
 universe u
 
+namespace tactic
+
+meta def at_target (tac : expr → tactic (expr × expr)) : tactic unit :=
+  do tgt ← target,
+     (new_tgt, pf) ← tac tgt,
+     n ← mk_fresh_name,
+     assert n new_tgt, swap,
+     ht ← get_local n,
+     mk_app `eq.mpr [pf, ht] >>= exact
+
+meta def fsimpt (ns : list name) (tac : tactic unit) : tactic unit := do
+  s ← list.mfoldl (λ slss n, simp_lemmas.add_simp slss n) simp_lemmas.mk ns,
+  at_target (λ e, do (a, new_e, pf) ← ext_simplify_core () {} s
+                                                        (λ u, failed)
+                                                        (λ a s r p e, failed)
+                                                        (λ a s r p e, do ⟨u, new_e, pr⟩ ← conv.apply_lemmas_core s tac r e,
+                                                                         return ((), new_e, pr, tt))
+                                                        `eq e,
+                     return (new_e, pf))
+end tactic
 namespace list
 variable {α : Type u}
 
@@ -374,13 +394,53 @@ have H₂ : aeval st₁ e₂ = aeval st₂ e₂,
 simp [H₁, H₂]
 end
 
+set_option pp.all true
+set_option trace.simplify true
+
 lemma beval_agree (L : list var) (st₁ st₂ : vstate) (H_agree : agree L st₁ st₂) :
   ∀ (b : bexp), fv_bexp b ⊆ L → beval st₁ b = beval st₂ b
-| (bexp.btrue)      H_ss := tt
-| (bexp.bfalse)     H_ss := sorry
-| (bexp.bnot b)     H_ss := sorry
-| (bexp.band b₁ b₂) H_ss := sorry
-| (bexp.beq e₁ e₂)  H_ss := sorry
-| (bexp.ble e₁ e₂)  H_ss := sorry
+| (bexp.btrue)      H_ss := rfl
+| (bexp.bfalse)     H_ss := rfl
+| (bexp.bnot b)     H_ss :=
+begin
+simp [beval], apply congr_arg, apply beval_agree, exact H_ss
+end
+
+| (bexp.band b₁ b₂) H_ss :=
+begin
+simp [fv_bexp] at H_ss,
+simp [beval],
+have H₁ : beval st₁ b₁ = beval st₂ b₁,
+{ apply beval_agree, apply subset_pre_union_left H_ss },
+have H₂ : beval st₁ b₂ = beval st₂ b₂,
+{ apply beval_agree, apply subset_pre_union_right H_ss },
+simp [H₁, H₂]
+end
+
+| (bexp.beq e₁ e₂)  H_ss :=
+begin
+simp [fv_bexp] at H_ss,
+simp only [beval],
+have H₁ : aeval st₁ e₁ = aeval st₂ e₁,
+{ apply aeval_agree, exact H_agree, apply subset_pre_union_left H_ss },
+have H₂ : aeval st₁ e₂ = aeval st₂ e₂,
+{ apply aeval_agree, exact H_agree, apply subset_pre_union_right H_ss },
+-- TODO(dhs): investigate crazy Lean behavior
+simp only [H₁]
+--rw [H₁, H₂]
+end
+
+| (bexp.ble e₁ e₂)  H_ss :=
+begin
+simp [fv_bexp] at H_ss,
+simp [beval],
+have H₁ : aeval st₁ e₁ = aeval st₂ e₁,
+{ apply aeval_agree, exact H_agree, apply subset_pre_union_left H_ss },
+have H₂ : aeval st₁ e₂ = aeval st₂ e₂,
+{ apply aeval_agree, exact H_agree, apply subset_pre_union_right H_ss },
+-- TODO(dhs): investigate crazy Lean behavior
+-- simp only [H₁, H₂]
+rw [H₁, H₂]
+end
 
 end compiler
